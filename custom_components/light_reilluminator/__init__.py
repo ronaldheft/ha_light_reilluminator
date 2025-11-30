@@ -1,5 +1,3 @@
-"""Undo recorder filtering for selected light attributes."""
-
 from __future__ import annotations
 
 import logging
@@ -17,103 +15,105 @@ from homeassistant.components.light import (
     ATTR_RGBWW_COLOR,
     ATTR_XY_COLOR,
 )
-from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN
-
+DOMAIN = "light_reilluminator"
 _LOGGER = logging.getLogger(__name__)
 
-# Attributes you want to restore to recorder
-DEFAULT_RESTORED_ATTRS: set[str] = {
-    ATTR_BRIGHTNESS,
-    ATTR_COLOR_MODE,
-    ATTR_COLOR_TEMP_KELVIN,
-    ATTR_EFFECT,
-    ATTR_HS_COLOR,
-    ATTR_RGB_COLOR,
-    ATTR_RGBW_COLOR,
-    ATTR_RGBWW_COLOR,
-    ATTR_XY_COLOR,
-}
+# This tells HA we are config-entry only and silences the CONFIG_SCHEMA warning
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-# Keep a copy of the original unrecorded-attributes set so we can restore it
+_PATCHED = False
 _ORIGINAL_EXCLUDED: frozenset[str] | None = None
 
 
-def _patch_light_entity(restored_attrs: set[str]) -> set[str]:
-    """Modify LightEntity's unrecorded attribute set.
+def _apply_patch() -> None:
+    """Monkey patch LightEntity so brightness / color_temp are recorded again."""
+    global _PATCHED, _ORIGINAL_EXCLUDED
 
-    Returns the set of attributes that were actually restored.
-    """
-    global _ORIGINAL_EXCLUDED
+    if _PATCHED:
+        return
 
     excluded = getattr(
         LightEntity,
         "_entity_component_unrecorded_attributes",
-        frozenset(),
+        None,
     )
 
-    if _ORIGINAL_EXCLUDED is None:
-        _ORIGINAL_EXCLUDED = excluded
+    _LOGGER.info(
+        "light_reilluminator: current LightEntity._entity_component_unrecorded_attributes=%r",
+        excluded,
+    )
 
-    if not excluded:
+    # If HA ever changes the type, don't blindly patch
+    if not isinstance(excluded, frozenset):
         _LOGGER.warning(
-            "LightEntity has no _entity_component_unrecorded_attributes; "
-            "nothing to patch"
+            "light_reilluminator: unexpected type for _entity_component_unrecorded_attributes "
+            "(%s); not patching",
+            type(excluded),
         )
-        return set()
+        return
 
-    # Build a new frozenset without the ones we want recorded again
-    new_excluded = frozenset(attr for attr in excluded if attr not in restored_attrs)
-    actually_restored = set(excluded) - set(new_excluded)
+    _ORIGINAL_EXCLUDED = excluded
+
+    to_restore = {
+        ATTR_BRIGHTNESS,
+        ATTR_COLOR_MODE,
+        ATTR_COLOR_TEMP_KELVIN,
+        ATTR_EFFECT,
+        ATTR_HS_COLOR,
+        ATTR_RGB_COLOR,
+        ATTR_RGBW_COLOR,
+        ATTR_RGBWW_COLOR,
+        ATTR_XY_COLOR,
+    }
+    restored = to_restore & excluded
+
+    if not restored:
+        _LOGGER.warning(
+            "light_reilluminator: none of %s are in the excluded set; nothing to restore",
+            sorted(to_restore),
+        )
+        return
+
+    new_excluded = frozenset(attr for attr in excluded if attr not in restored)
 
     LightEntity._entity_component_unrecorded_attributes = new_excluded
 
-    if actually_restored:
-        _LOGGER.info(
-            "light_reilluminator: restoring attributes to recorder: %s",
-            ", ".join(sorted(actually_restored)),
-        )
-    else:
-        _LOGGER.info(
-            "light_reilluminator: no matching attributes found to restore "
-            "(maybe core changed the list?)"
-        )
+    _LOGGER.info(
+        "light_reilluminator: restored attributes %s (original=%r, new=%r)",
+        sorted(restored),
+        excluded,
+        new_excluded,
+    )
 
-    return actually_restored
+    _PATCHED = True
+
+
+# Apply the patch as early as possible (module import time)
+_apply_patch()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Light Reilluminator from a config entry."""
-    _LOGGER.debug("Setting up %s config entry %s", DOMAIN, entry.entry_id)
+    _LOGGER.info("light_reilluminator: async_setup_entry called for %s", entry.entry_id)
 
-    # In the future, you could read options from entry.data/entry.options.
-    restored_attrs = DEFAULT_RESTORED_ATTRS.copy()
-    actually_restored = _patch_light_entity(restored_attrs)
+    # Just in case we were imported before the light component was ready,
+    # run the patch again (it is idempotent).
+    _apply_patch()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "restored_attrs": restored_attrs,
-        "actually_restored": actually_restored,
-    }
-
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {}
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry.
+    """Handle removal of a config entry.
 
-    We revert the LightEntity unrecorded-attributes set back to the original,
-    since this integration is single_config_entry and only patches once.
+    We intentionally do NOT try to revert the patch here; at this point
+    there may already be live entities using the modified behavior.
     """
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-
-    global _ORIGINAL_EXCLUDED
-    if _ORIGINAL_EXCLUDED is not None:
-        _LOGGER.info(
-            "light_reilluminator: restoring original LightEntity "
-            "_entity_component_unrecorded_attributes"
-        )
-        LightEntity._entity_component_unrecorded_attributes = _ORIGINAL_EXCLUDED
-
+    _LOGGER.info("light_reilluminator: config entry %s unloaded", entry.entry_id)
     return True
