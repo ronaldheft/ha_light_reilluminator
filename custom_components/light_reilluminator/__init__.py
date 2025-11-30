@@ -9,7 +9,6 @@ from homeassistant.components.light import (
     LightEntity,
     ATTR_BRIGHTNESS,
     ATTR_COLOR_MODE,
-    ATTR_COLOR_TEMP,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_EFFECT,
     ATTR_HS_COLOR,
@@ -29,7 +28,6 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_RESTORED_ATTRS: set[str] = {
     ATTR_BRIGHTNESS,
     ATTR_COLOR_MODE,
-    ATTR_COLOR_TEMP,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_EFFECT,
     ATTR_HS_COLOR,
