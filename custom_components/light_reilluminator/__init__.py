@@ -7,6 +7,7 @@ from homeassistant.components.light import (
     LightEntity,
     ATTR_BRIGHTNESS,
     ATTR_COLOR_MODE,
+    ATTR_COLOR_TEMP,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_EFFECT,
     ATTR_HS_COLOR,
@@ -61,6 +62,7 @@ def _apply_patch() -> None:
     to_restore = {
         ATTR_BRIGHTNESS,
         ATTR_COLOR_MODE,
+        ATTR_COLOR_TEMP,
         ATTR_COLOR_TEMP_KELVIN,
         ATTR_EFFECT,
         ATTR_HS_COLOR,
